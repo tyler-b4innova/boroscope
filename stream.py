@@ -3,8 +3,18 @@
 Teslong TD300 Boroscope Viewer
 Connects via iAP2, starts camera, streams MJPEG to browser at http://localhost:8080
 """
-import usb.core, usb.util, struct, time, sys, os, threading
+import struct, time, sys, os, threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# When running as PyInstaller bundle under sudo, macOS SIP strips DYLD paths.
+# Explicitly load bundled libusb so pyusb can find it.
+if getattr(sys, 'frozen', False):
+    _libusb = os.path.join(sys._MEIPASS, 'libusb-1.0.dylib')
+    if os.path.exists(_libusb):
+        import ctypes
+        ctypes.cdll.LoadLibrary(_libusb)
+
+import usb.core, usb.util
 
 VID, PID = 0x3301, 0x2003
 MK = b'\xFF\x55\x02\x00\xEE\x10'
@@ -111,24 +121,17 @@ def camera_thread(dev):
     time.sleep(0.3)
     info = rd82(500)
     if info and len(info) >= 5:
-        # Parse BB AA packet: 5-byte header + payload
         payload = info[5:]
-        if len(payload) >= 0x62:
+        if len(payload) >= 0x30:
             vendor = payload[0x00:0x10].rstrip(b'\x00').decode('utf-8', errors='replace')
             product = payload[0x10:0x20].rstrip(b'\x00').decode('utf-8', errors='replace')
             version = payload[0x20:0x30].rstrip(b'\x00').decode('utf-8', errors='replace')
             print(f"[CAMERA] {vendor} {product} fw={version}")
-            # Log raw bytes around camera info area for resolution discovery
-            print(f"[CAMERA] DevInfo[0x30:0x62]: {payload[0x30:0x62].hex()}")
+        # Dump full payload for analysis
+        print(f"[CAMERA] DevInfo ({len(payload)}b): {payload.hex()}")
 
-    # Try switching to highest resolution before opening stream
-    # BB AA 0B 03 00 [cam_id=0] [resolution_le16]
-    # Try common resolution indices: 2=1080p, 1=720p, 0=VGA (typical pattern)
-    wr02(b'\xBB\xAA\x0B\x03\x00\x00\x02\x00')  # cam_id=0, resolution=2
-    time.sleep(0.3)
-    switch_resp = rd82(500)
-    if switch_resp and len(switch_resp) >= 5:
-        print(f"[CAMERA] Switch response: {switch_resp[:20].hex()}")
+    # Note: NTC100 firmware only supports res_cur=8 (1280x720).
+    # CID 0x0B switch command returns status=5 (error) for all other values.
 
     # Open stream (CID 0x06)
     wr02(b'\xBB\xAA\x06\x00\x00')
