@@ -405,7 +405,53 @@ The devflag determines which sleep/wake command variant to use, and whether
 
 ---
 
-## 11. Notes and Caveats
+## 11. Observed Device Behavior (TD300 / NTC100 fw 1.0.41)
+
+### 11.1 DevInfo Response (CID 0x05)
+
+Full response is 512 bytes (507 payload after 5-byte header). Structure with 2-byte
+prefix before the vs_devinfo_t fields:
+
+```
+Offset  Size   Field              Observed Value
+------  -----  -----------------  --------------------------------
+0x00    2      prefix             00 01
+0x02    16     fw_info.vendor     "TESLONG"
+0x12    16     fw_info.product    "NTC100"
+0x22    16     fw_info.version    "Ver.1.0.41"
+0x32    1      unknown            01
+0x33    3      device_id          13 60 b3
+0x36    5      padding            00 00 00 00 00
+0x3B    15     serial_number      5513514793029732104153325a3337
+0x4A    1      separator          00
+0x4B    1      cam_num            01 (1 camera)
+0x4C    1      cam_cur            00 (camera index 0)
+0x4D    1      res_cur            08 (resolution index 8)
+0x4E    2      res_list           00 08 (one entry: index 8)
+0x50    ...    padding            all zeros to end
+```
+
+### 11.2 Resolution Limitations
+
+- Resolution index 8 = 1280x720 MJPEG
+- CID 0x0B (changeCamera) tested with values: 0x01-0x04, 0x09, 0x0A, 0x0C, 0x0F, 0x10, 0x12
+- ALL returned `BB AA 0B 00 00` with trailing status byte `05` (error)
+- The `_check_cmd_return` function checks `buf[5] == 0` for success; status 5 = rejected
+- res_list contains only one entry (8), confirming this firmware only supports 720p video
+- The "1920x1080" in TD300 product spec likely refers to sensor resolution or photo mode
+
+### 11.3 Video Stream Characteristics
+
+- Frame size: ~55-60KB per JPEG frame at 1280x720
+- Frame rate: ~10 fps
+- First video chunk starts with `AA BB 0A FB 01` (CID 0x0A, large payload)
+- JPEG data begins at offset 12 within each packet (5 outer + 7 inner header)
+- Typical frame spans multiple USB bulk reads (~44KB per complete frame)
+- JPEG boundaries: FFD8 start marker, FFD9 end marker (trailing zeros may follow)
+
+---
+
+## 12. Notes and Caveats
 
 - The sync word can appear as either `BB AA` or `AA BB`. Both are accepted
   by the parser. Commands sent by the host use `BB AA`.

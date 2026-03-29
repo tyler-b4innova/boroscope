@@ -1,0 +1,12 @@
+#!/bin/bash
+echo "[hook] Building boroscope..."
+source "$(git rev-parse --show-toplevel)/venv/bin/activate"
+LIBUSB="$(brew --prefix libusb 2>/dev/null)/lib/libusb-1.0.dylib"
+EXTRA=""
+[ -f "$LIBUSB" ] && EXTRA="--add-binary $LIBUSB:."
+pyinstaller --onefile --name boroscope $EXTRA stream.py --distpath dist --workpath /tmp/boroscope-build --specpath /tmp 2>/dev/null
+if [ $? -eq 0 ]; then
+    echo "[hook] Built: dist/boroscope ($(du -h dist/boroscope | cut -f1))"
+else
+    echo "[hook] Build FAILED"
+fi

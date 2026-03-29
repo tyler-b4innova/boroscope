@@ -17,10 +17,14 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install pyusb pyinstaller
+        run: |
+          brew install libusb
+          pip install pyusb pyinstaller
 
       - name: Build executable
-        run: pyinstaller --onefile --name boroscope stream.py
+        run: |
+          LIBUSB="$(brew --prefix libusb)/lib/libusb-1.0.dylib"
+          pyinstaller --onefile --name boroscope --add-binary "$LIBUSB:." stream.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
