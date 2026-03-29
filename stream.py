@@ -106,12 +106,32 @@ def camera_thread(dev):
         try: dev.write(0x02, d, timeout=2000)
         except Exception: pass
 
-    # Send camera commands
-    wr02(b'\xBB\xAA\x05\x00\x00')  # get device info
+    # Get device info (CID 0x05) — parse for resolution capabilities
+    wr02(b'\xBB\xAA\x05\x00\x00')
     time.sleep(0.3)
-    rd82(500)  # read response (discard)
+    info = rd82(500)
+    if info and len(info) >= 5:
+        # Parse BB AA packet: 5-byte header + payload
+        payload = info[5:]
+        if len(payload) >= 0x62:
+            vendor = payload[0x00:0x10].rstrip(b'\x00').decode('utf-8', errors='replace')
+            product = payload[0x10:0x20].rstrip(b'\x00').decode('utf-8', errors='replace')
+            version = payload[0x20:0x30].rstrip(b'\x00').decode('utf-8', errors='replace')
+            print(f"[CAMERA] {vendor} {product} fw={version}")
+            # Log raw bytes around camera info area for resolution discovery
+            print(f"[CAMERA] DevInfo[0x30:0x62]: {payload[0x30:0x62].hex()}")
 
-    wr02(b'\xBB\xAA\x06\x00\x00')  # open stream
+    # Try switching to highest resolution before opening stream
+    # BB AA 0B 03 00 [cam_id=0] [resolution_le16]
+    # Try common resolution indices: 2=1080p, 1=720p, 0=VGA (typical pattern)
+    wr02(b'\xBB\xAA\x0B\x03\x00\x00\x02\x00')  # cam_id=0, resolution=2
+    time.sleep(0.3)
+    switch_resp = rd82(500)
+    if switch_resp and len(switch_resp) >= 5:
+        print(f"[CAMERA] Switch response: {switch_resp[:20].hex()}")
+
+    # Open stream (CID 0x06)
+    wr02(b'\xBB\xAA\x06\x00\x00')
     time.sleep(0.2)
     rd82(500)  # read ack
 
