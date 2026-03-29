@@ -1,0 +1,7 @@
+venv/
+__pycache__/
+*.pyc
+TeslongViewer.app/
+*.bin
+*.jpg
+wiomoc-iap2/
