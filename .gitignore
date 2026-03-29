@@ -5,3 +5,6 @@ TeslongViewer.app/
 *.bin
 *.jpg
 wiomoc-iap2/
+build/
+dist/
+*.spec

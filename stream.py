@@ -29,10 +29,10 @@ def iap2_handshake(dev):
 
     def rd(ep=0x81, to=2000):
         try: return bytes(dev.read(ep, 65536, timeout=to))
-        except: return None
+        except Exception: return None
     def wr(d, ep=0x01):
         try: dev.write(ep, d, timeout=2000); return True
-        except: return False
+        except Exception: return False
 
     # Detect
     for _ in range(5): rd(to=200)
@@ -101,10 +101,10 @@ def camera_thread(dev):
 
     def rd82(to=100):
         try: return bytes(dev.read(0x82, 65536, timeout=to))
-        except: return None
+        except Exception: return None
     def wr02(d):
         try: dev.write(0x02, d, timeout=2000)
-        except: pass
+        except Exception: pass
 
     # Send camera commands
     wr02(b'\xBB\xAA\x05\x00\x00')  # get device info
@@ -236,6 +236,12 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_response(503)
                 self.end_headers()
+        elif self.path == '/quit':
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Shutting down...')
+            threading.Thread(target=lambda: os._exit(0), daemon=True).start()
         else:
             self.send_response(404)
             self.end_headers()
@@ -260,6 +266,7 @@ body{background:#111;color:#eee;font-family:system-ui;display:flex;flex-directio
   <div class="controls">
     <span class="status" id="status">Connecting...</span>
     <button onclick="snapshot()">Screenshot</button>
+    <button onclick="if(confirm('Stop viewer?'))fetch('/quit')" style="color:#f88">Quit</button>
   </div>
 </div>
 <div class="view">
@@ -273,14 +280,19 @@ function snapshot(){window.open('/snapshot','_blank')}
 </script></body></html>"""
 
 
-def main():
-    print("=" * 50)
-    print("  Teslong TD300 Boroscope Viewer")
-    print("=" * 50)
+camera_alive = threading.Event()
+
+
+def connect_and_stream():
+    """Connect to TD300, handshake, start camera. Returns when camera thread dies."""
+    global latest_frame, frame_count
 
     dev = usb.core.find(idVendor=VID, idProduct=PID)
     if not dev:
-        print("TD300 not found! Plug it in."); sys.exit(1)
+        print("[*] Waiting for TD300...")
+        while not dev:
+            time.sleep(1)
+            dev = usb.core.find(idVendor=VID, idProduct=PID)
     print(f"Found: {dev.product}")
 
     print("[*] USB reset...")
@@ -291,43 +303,60 @@ def main():
         time.sleep(1)
         dev = usb.core.find(idVendor=VID, idProduct=PID)
     if not dev:
-        print("Device lost after reset!"); sys.exit(1)
-    print(f"[*] Reclaimed: {dev.product}")
+        print("[!] Device lost after reset")
+        return
 
     for i in [0, 1]:
         try:
             if dev.is_kernel_driver_active(i): dev.detach_kernel_driver(i)
-        except: pass
+        except Exception: pass
     try: dev.set_configuration()
-    except: pass
+    except Exception: pass
     for i in [0, 1]:
         try: usb.util.claim_interface(dev, i)
-        except: pass
+        except Exception: pass
 
     print("[*] iAP2 handshake...")
     tx, rx = iap2_handshake(dev)
     if tx is None:
-        print("FAILED"); sys.exit(1)
+        print("[!] Handshake failed")
+        return
     print("[OK] Handshake complete")
 
-    # Start camera thread
+    camera_alive.set()
     t = threading.Thread(target=camera_thread, args=(dev,), daemon=True)
     t.start()
+    t.join()  # Block until camera thread dies
+    camera_alive.clear()
+    print("[!] Camera disconnected")
 
-    # Start web server
+    for i in [0, 1]:
+        try: usb.util.release_interface(dev, i)
+        except Exception: pass
+
+
+def main():
+    print("=" * 50)
+    print("  Teslong TD300 Boroscope Viewer")
+    print("=" * 50)
+
+    # Start web server in background
     port = 8080
     HTTPServer.allow_reuse_address = True
     server = HTTPServer(('0.0.0.0', port), Handler)
-    print(f"\n[*] Open http://localhost:{port} in your browser")
-    print("[*] Press Ctrl+C to stop\n")
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    print(f"[*] Open http://localhost:{port} in your browser")
+
+    # Connect loop — reconnects on disconnect
     try:
-        server.serve_forever()
+        while True:
+            connect_and_stream()
+            print("[*] Reconnecting in 3s...")
+            time.sleep(3)
     except KeyboardInterrupt:
         print("\nStopping...")
-    finally:
-        for i in [0, 1]:
-            try: usb.util.release_interface(dev, i)
-            except: pass
+        server.shutdown()
 
 
 if __name__ == '__main__':
